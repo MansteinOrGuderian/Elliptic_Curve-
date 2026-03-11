@@ -1,0 +1,56 @@
+# C++ build artifacts (EC_Code folder)
+EC_Code/*.o
+EC_Code/*.a
+EC_Code/*.so
+EC_Code/*.dylib
+EC_Code/*.exe
+EC_Code/*.dll
+EC_Code/*.out
+EC_Code/*.sln
+EC_Code/*.vcxproj*
+EC_Code/x64
+
+# CMake
+EC_Code/CMakeFiles/
+EC_Code/CMakeCache.txt
+EC_Code/cmake_install.cmake
+EC_Code/Makefile
+EC_Code/*.cmake
+
+# IDE
+.vs*
+.vscode/
+.idea/
+*.swp
+*.swo
+*.code-workspace
+
+# Build directories
+EC_Code/build/
+EC_Code/dist/
+EC_Code/bin/
+EC_Code/obj/
+
+# LaTeX (EC_Latex folder)
+EC_Latex/*.aux
+EC_Latex/*.bbl
+EC_Latex/*.blg
+EC_Latex/*.fls
+EC_Latex/*.fdb_latexmk
+EC_Latex/*.log
+EC_Latex/*.out
+EC_Latex/*.pdf
+EC_Latex/*.synctex.gz
+EC_Latex/*.toc
+EC_Latex/*.lof
+EC_Latex/*.lot
+EC_Latex/*.dvi
+EC_Latex/*.ps
+
+# OS
+.DS_Store
+Thumbs.db
+*.tmp
+
+# Dependencies
+EC_Code/*.gch
