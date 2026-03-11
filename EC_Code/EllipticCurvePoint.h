@@ -22,7 +22,17 @@ public:
     }
 
     // Створення точки з афінних координат (x, y) -> (x, y, 1)
+    // Перевіряє належність точки до кривої; кидає виключення якщо ні.
     static EllipticCurvePoint fromAffine(const T& x, const T& y, const EllipticCurve<T>* curve) {
+        EllipticCurvePoint pt(x, y, T(1), curve);
+        if (!pt.isOnCurve())
+            throw std::runtime_error("fromAffine: point (" + toString(x) + ", " + toString(y) + ") is NOT on the curve");
+        return pt;
+    }
+
+    // Створення точки БЕЗ перевірки (для внутрішнього використання —
+    // результати арифметики гарантовано на кривій, якщо вхід був коректний)
+    static EllipticCurvePoint fromAffineUnchecked(const T& x, const T& y, const EllipticCurve<T>* curve) {
         return EllipticCurvePoint(x, y, T(1), curve);
     }
 
@@ -30,6 +40,27 @@ public:
 
     bool isInfinity() const {
         return Z == 0;
+    }
+
+    // Перевірка з throw — для використання перед арифметичними операціями.
+    // Тиха: не друкує verbose, бо це внутрішня перевірка.
+    void assertOnCurve(const std::string& context) const {
+        if (isInfinity()) return;  // O_E завжди на кривій
+
+        const T& p = curve->p;
+        const T& a = curve->a;
+        const T& b = curve->b;
+
+        T Y2 = mod(Y * Y, p);
+        T lhs = mod(Y2 * Z, p);
+        T X2 = mod(X * X, p);
+        T X3 = mod(X2 * X, p);
+        T Z2 = mod(Z * Z, p);
+        T Z3 = mod(Z2 * Z, p);
+        T rhs = mod(X3 + mod(mod(a * X, p) * Z2, p) + mod(b * Z3, p), p);
+
+        if (lhs != rhs)
+            throw std::runtime_error(context + ": point is NOT on the curve");
     }
 
     // Перевірка належності точки до кривої: Y^2*Z = X^3 + a*X*Z^2 + b*Z^3 (mod p)
@@ -96,13 +127,16 @@ public:
             return infinity(curve);
         }
 
+        assertOnCurve("pointDouble");
+
         const T& p = curve->p;
         const T& a = curve->a;
 
         // Точка порядку 2: Y == 0 => 2P = O_E
         if (mod(Y, p) == 0) {
             if (curve->verbose)
-                std::cout << "[pointDouble] Y == 0, point of order 2 -> O_E" << std::endl;
+                std::cout << "[pointDouble] P = (" << toString(X) << ", " << toString(Y) << ", " << toString(Z)
+                          << "), Y == 0 -> point of order 2 -> O_E" << std::endl;
             return infinity(curve);
         }
 
@@ -131,6 +165,83 @@ public:
         }
 
         return EllipticCurvePoint(Xr, Yr, Zr, curve);
+    }
+
+    // Додавання двох точок у проективних координатах
+    // За псевдокодом: U1, U2, V1, V2 -> U, V, W, A -> X3, Y3, Z3
+    EllipticCurvePoint pointAdd(const EllipticCurvePoint& other) const {
+        const T& p = curve->p;
+
+        // P + O_E = P,  O_E + Q = Q
+        if (isInfinity()) {
+            if (curve->verbose)
+                std::cout << "[pointAdd] P = O_E -> result = Q" << std::endl;
+            return other;
+        }
+        if (other.isInfinity()) {
+            if (curve->verbose)
+                std::cout << "[pointAdd] Q = O_E -> result = P" << std::endl;
+            return *this;
+        }
+
+        assertOnCurve("pointAdd (P)");
+        other.assertOnCurve("pointAdd (Q)");
+
+        // U1 = Y2*Z1,  U2 = Y1*Z2  (порівняння Y-координат у спільному масштабі)
+        T U1 = mod(other.Y * Z, p);
+        T U2 = mod(Y * other.Z, p);
+        // V1 = X2*Z1,  V2 = X1*Z2  (порівняння X-координат у спільному масштабі)
+        T V1 = mod(other.X * Z, p);
+        T V2 = mod(X * other.Z, p);
+
+        if (V1 == V2) {
+            // Однакова X-координата
+            if (U1 != U2) {
+                // P і Q — взаємно обернені: P + (-P) = O_E
+                if (curve->verbose)
+                    std::cout << "[pointAdd] P = (" << toString(X) << ", " << toString(Y) << ", " << toString(Z)
+                              << "), Q = (" << toString(other.X) << ", " << toString(other.Y) << ", " << toString(other.Z)
+                              << ") -> inverse points -> O_E" << std::endl;
+                return infinity(curve);
+            } else {
+                // P == Q: переходимо до подвоєння
+                if (curve->verbose)
+                    std::cout << "[pointAdd] P == Q -> calling pointDouble" << std::endl;
+                return pointDouble();
+            }
+        }
+
+        // Загальний випадок: P != Q, P != -Q
+        T U  = mod(U1 - U2, p);                          // U = U1 - U2
+        T V  = mod(V1 - V2, p);                          // V = V1 - V2
+        T W  = mod(Z * other.Z, p);                      // W = Z1*Z2
+        T Vsq = mod(V * V, p);                           // V^2
+        T Vcb = mod(Vsq * V, p);                         // V^3
+        T Usq = mod(U * U, p);                           // U^2
+        T VsqV2 = mod(Vsq * V2, p);                     // V^2 * V2
+        T A  = mod(mod(Usq * W, p) - Vcb - mod(2 * VsqV2, p), p);  // A = U^2*W - V^3 - 2*V^2*V2
+        T X3 = mod(V * A, p);                            // X3 = V*A
+        T Y3 = mod(mod(U * mod(VsqV2 - A, p), p) - mod(Vcb * U2, p), p);  // Y3 = U*(V^2*V2 - A) - V^3*U2
+        T Z3 = mod(Vcb * W, p);                          // Z3 = V^3*W
+
+        if (curve->verbose) {
+            std::string mp = " (mod " + toString(p) + ")";
+            std::cout << "[pointAdd] P = (" << toString(X) << ", " << toString(Y) << ", " << toString(Z)
+                      << "), Q = (" << toString(other.X) << ", " << toString(other.Y) << ", " << toString(other.Z) << ")" << std::endl;
+            std::cout << "  U1 = Y2*Z1 = " << toString(other.Y) << "*" << toString(Z) << " = " << toString(U1) << mp << std::endl;
+            std::cout << "  U2 = Y1*Z2 = " << toString(Y) << "*" << toString(other.Z) << " = " << toString(U2) << mp << std::endl;
+            std::cout << "  V1 = X2*Z1 = " << toString(other.X) << "*" << toString(Z) << " = " << toString(V1) << mp << std::endl;
+            std::cout << "  V2 = X1*Z2 = " << toString(X) << "*" << toString(other.Z) << " = " << toString(V2) << mp << std::endl;
+            std::cout << "  U = U1-U2 = " << toString(U1) << "-" << toString(U2) << " = " << toString(U) << mp << std::endl;
+            std::cout << "  V = V1-V2 = " << toString(V1) << "-" << toString(V2) << " = " << toString(V) << mp << std::endl;
+            std::cout << "  W = Z1*Z2 = " << toString(Z) << "*" << toString(other.Z) << " = " << toString(W) << mp << std::endl;
+            std::cout << "  A = U^2*W - V^3 - 2*V^2*V2 = " << toString(A) << mp << std::endl;
+            std::cout << "  X3 = V*A = " << toString(V) << "*" << toString(A) << " = " << toString(X3) << mp << std::endl;
+            std::cout << "  Y3 = U*(V^2*V2-A) - V^3*U2 = " << toString(Y3) << mp << std::endl;
+            std::cout << "  Z3 = V^3*W = " << toString(Vcb) << "*" << toString(W) << " = " << toString(Z3) << mp << std::endl;
+        }
+
+        return EllipticCurvePoint(X3, Y3, Z3, curve);
     }
 
     // --- Виведення ---

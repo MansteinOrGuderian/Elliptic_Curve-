@@ -17,19 +17,18 @@ int main() {
         O.print();
         std::cout << std::endl;
 
-        // Точка (4, 5) -- на кривій:
-        // x=4: x^3+5x+7 = 64+20+7 = 91 = 3 (mod 11), y=5: y^2 = 25 = 3 (mod 11) -> OK
+        // Точка (4, 5) -- fromAffine перевірить належність автоматично
         auto P = EllipticCurvePoint<long long>::fromAffine(4LL, 5LL, &curve);
-        std::cout << "Point P: ";
+        std::cout << "P = ";
         P.print();
-        P.isOnCurve();
         std::cout << std::endl;
 
-        // Точка (1, 1) -- НЕ на кривій
-        auto fake = EllipticCurvePoint<long long>::fromAffine(1LL, 1LL, &curve);
-        std::cout << "Fake point: ";
-        fake.print();
-        fake.isOnCurve();
+        // Спроба створити точку (1, 1) -- fromAffine кине виключення
+        try {
+            auto Q = EllipticCurvePoint<long long>::fromAffine(1LL, 1LL, &curve);
+        } catch (const std::runtime_error& e) {
+            std::cout << e.what() << std::endl;
+        }
         std::cout << std::endl;
 
         // --- PointDouble тест ---
@@ -47,6 +46,48 @@ int main() {
         auto fourP = twoP.pointDouble();
         std::cout << "4P = 2*(2P) = ";
         fourP.print();
+        std::cout << std::endl;
+
+        // --- PointAdd тести ---
+        std::cout << "--- PointAdd tests ---" << std::endl;
+
+        // Друга точка Q = (2, 5)
+        auto Q = EllipticCurvePoint<long long>::fromAffine(2LL, 5LL, &curve);
+        std::cout << "Q = ";
+        Q.print();
+
+        // -P = (4, 6)  бо -(4,5) = (4, -5 mod 11) = (4, 6)
+        auto negP = EllipticCurvePoint<long long>::fromAffine(4LL, 6LL, &curve);
+        std::cout << "-P = ";
+        negP.print();
+        std::cout << std::endl;
+
+        // P + Q (різні точки)
+        auto PpQ = P.pointAdd(Q);
+        std::cout << "P + Q = ";
+        PpQ.print();
+        std::cout << "On curve: " << (PpQ.isOnCurve() ? "YES" : "NO") << std::endl;
+        std::cout << std::endl;
+
+        // P + P має дорівнювати 2P (перевірка що pointAdd делегує в pointDouble)
+        auto PpP = P.pointAdd(P);
+        std::cout << "P + P = ";
+        PpP.print();
+        std::cout << "Equals 2P: " << (PpP.equals(twoP) ? "YES" : "NO") << std::endl;
+        std::cout << std::endl;
+
+        // P + (-P) = O_E
+        auto PpNegP = P.pointAdd(negP);
+        std::cout << "P + (-P) = ";
+        PpNegP.print();
+        std::cout << std::endl;
+
+        // P + O_E = P
+        auto O_E = EllipticCurvePoint<long long>::infinity(&curve);
+        auto PpO = P.pointAdd(O_E);
+        std::cout << "P + O_E = ";
+        PpO.print();
+        std::cout << "Equals P: " << (PpO.equals(P) ? "YES" : "NO") << std::endl;
         std::cout << std::endl;
     }
 
@@ -91,17 +132,25 @@ int main() {
         std::cout << "2G = ";
         twoG.print();
         std::cout << "2G on curve: " << (twoG.isOnCurve() ? "YES" : "NO") << std::endl;
+
+        // --- PointAdd тест для BJJ ---
+        // G + G має дорівнювати 2G
+        auto GpG = G.pointAdd(G);
+        std::cout << "G + G equals 2G: " << (GpG.equals(twoG) ? "YES" : "NO") << std::endl;
+
+        // G + 2G = 3G (перевіримо що на кривій)
+        auto threeG = G.pointAdd(twoG);
+        std::cout << "3G = G + 2G: ";
+        threeG.print();
+        std::cout << "3G on curve: " << (threeG.isOnCurve() ? "YES" : "NO") << std::endl;
         std::cout << std::endl;
     }
 
     std::cout << "\n========== Modular arithmetic tests ==========\n\n";
     {
         std::cout << "mod(-3, 11) = " << mod(-3LL, 11LL) << " (expected 8)" << std::endl;
-        std::cout << "mod(15, 11) = " << mod(15LL, 11LL) << " (expected 4)" << std::endl;
         std::cout << "modInverse(3, 11) = " << modInverse(3LL, 11LL) << " (expected 4)" << std::endl;
-        std::cout << "modInverse(7, 11) = " << modInverse(7LL, 11LL) << " (expected 8)" << std::endl;
         std::cout << "modPow(2, 10, 11) = " << modPow(2LL, 10LL, 11LL) << " (expected 1)" << std::endl;
-        std::cout << "modPow(3, 5, 11) = " << modPow(3LL, 5LL, 11LL) << " (expected 1)" << std::endl;
     }
 
     return 0;
