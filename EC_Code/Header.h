@@ -90,6 +90,88 @@ inline long long modPow(long long base, long long exp, long long p) {
     return result;
 }
 
+// --- modSqrt: квадратний корінь за модулем простого p ---
+// Повертає y таке що y^2 ≡ a (mod p), або -1 якщо кореня немає.
+// Реалізація через алгоритм Тонеллі-Шенкса (працює для будь-якого непарного простого p).
+// verbose = true -> покрокове виведення обчислень.
+
+inline long long modSqrt(long long a, long long p, bool verbose = false) {
+    a = mod(a, p);
+    if (a == 0) return 0;
+
+    // Перевірка: a — квадратичний лишок?
+    // Символ Лежандра: (a/p) = a^((p-1)/2) mod p.  Результат: 1 = лишок, p-1 = нелишок.
+    // Складність: O(log p) множень — швидко навіть для великих p.
+    long long legendre = modPow(a, (p - 1) / 2, p);
+    if (legendre != 1) {
+        if (verbose) std::cout << "  [modSqrt] Legendre(" << a << "/" << p << ") = " << legendre << " != 1 -> not a QR" << std::endl;
+        return -1;
+    }
+
+    // Випадок а): p ≡ 3 (mod 4) => y = a^((p+1)/4) mod p
+    if (p % 4 == 3) {
+        long long y = modPow(a, (p + 1) / 4, p);
+        if (verbose)
+            std::cout << "  [modSqrt] p = 4k+3 (k=" << (p - 3) / 4 << "): y = " << a
+                      << "^(" << (p + 1) / 4 << ") = " << y << " (mod " << p << ")" << std::endl;
+        return y;
+    }
+
+    // Випадок б): p ≡ 5 (mod 8) => формула Аткіна
+    //   v = (2a)^((p-5)/8), i = 2a*v^2, y = a*v*(i-1)
+    if (p % 8 == 5) {
+        long long k = (p - 5) / 8;
+        long long twoA = mod(2 * a, p);
+        long long v = modPow(twoA, k, p);               // v = (2a)^k
+        long long v2 = mod(v * v, p);                    // v^2
+        long long i = mod(twoA * v2, p);                 // i = 2a*v^2
+        long long y = mod(mod(a * v, p) * mod(i - 1, p), p);  // y = a*v*(i-1)
+        if (verbose)
+            std::cout << "  [modSqrt] p = 8k+5 (k=" << k << "): v=(2a)^k=" << v
+                      << ", i=2a*v^2=" << i << ", y = a*v*(i-1) = " << y << " (mod " << p << ")" << std::endl;
+        return y;
+    }
+
+    // Загальний випадок (p ≡ 1 mod 8): повний алгоритм Тонеллі-Шенкса
+    if (verbose) std::cout << "  [modSqrt] p = 8k+1, using Tonelli-Shanks" << std::endl;
+
+    // Розкладаємо p-1 = 2^s * q (q — непарне)
+    long long s = 0, q = p - 1;
+    while (q % 2 == 0) { q /= 2; s++; }
+
+    // Шукаємо квадратичний нелишок z
+    long long z = 2;
+    while (modPow(z, (p - 1) / 2, p) != p - 1) z++;
+
+    if (verbose)
+        std::cout << "  p-1 = 2^" << s << " * " << q << ", non-residue z = " << z << std::endl;
+
+    long long M = s;
+    long long c = modPow(z, q, p);
+    long long t = modPow(a, q, p);
+    long long R = modPow(a, (q + 1) / 2, p);
+
+    while (true) {
+        if (t == 1) {
+            if (verbose)
+                std::cout << "  result y = " << R << " (mod " << p << ")" << std::endl;
+            return R;
+        }
+        // Знаходимо найменше i таке що t^(2^i) ≡ 1
+        long long i = 0;
+        long long temp = t;
+        while (temp != 1) { temp = mod(temp * temp, p); i++; }
+
+        long long b = c;
+        for (long long j = 0; j < M - i - 1; j++) b = mod(b * b, p);
+
+        M = i;
+        c = mod(b * b, p);
+        t = mod(t * c, p);
+        R = mod(R * b, p);
+    }
+}
+
 // Підключення класів кривої та точки
 #include "EllipticCurve.h"
 #include "EllipticCurvePoint.h"

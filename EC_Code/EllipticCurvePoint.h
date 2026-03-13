@@ -244,6 +244,130 @@ public:
         return EllipticCurvePoint(X3, Y3, Z3, curve);
     }
 
+    // --- Скалярний добуток ---
+
+    // Алгоритм DoubleAndAdd: kP = P + P + ... + P (k разів)
+    // Ітерує по бітах k від молодшого до старшого.
+    // Час виконання залежить від кількості одиничних бітів (НЕ константний).
+    EllipticCurvePoint scalarMul(const T& k) const {
+        if (k == 0 || isInfinity())
+            return infinity(curve);
+
+        assertOnCurve("scalarMul");
+
+        EllipticCurvePoint res = infinity(curve);   // акумулятор
+        EllipticCurvePoint temp = *this;            // поточна степінь: P, 2P, 4P, ...
+
+        // Отримуємо бітове представлення k
+        std::vector<int> bits = getBits(k);
+
+        if (curve->verbose) {
+            std::cout << "[scalarMul DoubleAndAdd] k = " << toString(k)
+                      << " (" << bits.size() << " bits)" << std::endl;
+        }
+
+        for (size_t i = 0; i < bits.size(); i++) {
+            if (bits[i] == 1) {
+                if (curve->verbose)
+                    std::cout << "  bit[" << i << "] = 1: res = res + temp" << std::endl;
+                res = res.pointAdd(temp);
+            } else {
+                if (curve->verbose)
+                    std::cout << "  bit[" << i << "] = 0: skip" << std::endl;
+            }
+            temp = temp.pointDouble();
+        }
+
+        return res;
+    }
+
+    // Алгоритм сходів Монтгомері: kP
+    // Константний час виконання — завжди робить одне додавання і одне подвоєння на біт.
+    // Це важливо для криптографії (захист від side-channel атак).
+    EllipticCurvePoint scalarMulMontgomery(const T& k) const {
+        if (k == 0 || isInfinity())
+            return infinity(curve);
+
+        assertOnCurve("scalarMulMontgomery");
+
+        EllipticCurvePoint R0 = infinity(curve);
+        EllipticCurvePoint R1 = *this;
+
+        std::vector<int> bits = getBits(k);
+
+        if (curve->verbose) {
+            std::cout << "[scalarMul Montgomery] k = " << toString(k)
+                      << " (" << bits.size() << " bits)" << std::endl;
+        }
+
+        // Зворотня ітерація: від старшого біта до молодшого
+        for (int i = static_cast<int>(bits.size()) - 1; i >= 0; i--) {
+            if (bits[i] == 0) {
+                if (curve->verbose)
+                    std::cout << "  bit[" << i << "] = 0: R1 = R0+R1, R0 = 2*R0" << std::endl;
+                R1 = R0.pointAdd(R1);
+                R0 = R0.pointDouble();
+            } else {
+                if (curve->verbose)
+                    std::cout << "  bit[" << i << "] = 1: R0 = R0+R1, R1 = 2*R1" << std::endl;
+                R0 = R0.pointAdd(R1);
+                R1 = R1.pointDouble();
+            }
+        }
+
+        return R0;
+    }
+
+private:
+    // Бітове представлення числа (від молодшого до старшого біту).
+    // Працює і для long long, і для mpz_class (обидва підтримують % і /).
+    static std::vector<int> getBits(const T& k) {
+        std::vector<int> bits;
+        T val = k;
+        while (val > 0) {
+            T remainder = val % 2;
+            bits.push_back(remainder == 0 ? 0 : 1);
+            val /= 2;
+        }
+        return bits;  // bits[0] = LSB, bits[size-1] = MSB
+    }
+
+public:
+
+    // --- Порядок точки ---
+
+    // Знаходить порядок точки P — найменше k > 0 таке що kP = O_E.
+    // За теоремою Лагранжа, порядок точки ділить порядок кривої n.
+    // Тому перебираємо дільники n від найменшого.
+    T pointOrder() const {
+        if (isInfinity()) return T(1);
+
+        const T& n = curve->n;
+        if (n == 0) throw std::runtime_error("pointOrder: curve order n is not set");
+
+        // Збираємо дільники n
+        std::vector<T> divisors;
+        for (T d = 1; d * d <= n; d += 1) {
+            if (n % d == 0) {
+                divisors.push_back(d);
+                if (d != n / d) divisors.push_back(n / d);
+            }
+        }
+        std::sort(divisors.begin(), divisors.end());
+
+        // Перевіряємо від найменшого
+        for (const T& d : divisors) {
+            auto res = scalarMul(d);
+            if (res.isInfinity()) {
+                if (curve->verbose)
+                    std::cout << "[pointOrder] ord(P) = " << toString(d) << " (first divisor of n=" << toString(n) << " where d*P = O_E)" << std::endl;
+                return d;
+            }
+        }
+
+        throw std::runtime_error("pointOrder: failed to find order (should not happen)");
+    }
+
     // --- Виведення ---
 
     // Допоміжна функція: T -> string (для сумісності з MSVC operator<< для mpz_class)
