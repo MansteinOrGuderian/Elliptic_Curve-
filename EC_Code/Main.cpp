@@ -3,7 +3,7 @@
 int main() {
     std::cout << "========== Simplified case ==========\n\n";
     {
-        // Edit a, b, p кривої y^2 = x^3 + a*x + b (mod p)
+        // Set a, b, p for curve y^2 = x^3 + a*x + b (mod p)
         long long sa = 5, sb = 7, sp = 11;
 
         EllipticCurve<long long> curve(sa, sb, sp, 0LL, /*verbose=*/true);
@@ -11,13 +11,18 @@ int main() {
         curve.isNonSingular();
         std::cout << std::endl;
 
-        // Знаходимо всі точки (заповнює n); sqrtExampleX=2 — показати обчислення для x=2
-        auto allPoints = curve.findAllPoints(/*showTable=*/true, /*sqrtExampleX=*/2);
-        std::cout << "Order of curve: n = " << curve.n << std::endl;
+        // Find all points (fills n); sqrtExampleX=2 -- show sqrt computation for x=2
+        auto allPoints = curve.findAllPointsBruteforce(/*showTable=*/true, /*sqrtExampleX=*/2);
+        std::cout << "Order (bruteforce): n = " << curve.n << std::endl;
+
+        // Verify with Schoof's algorithm
+        long long schoofN = curve.schoofOrder();
+        std::cout << "Order (Schoof):     n = " << schoofN << std::endl;
+        std::cout << "Match: " << (curve.n == schoofN ? "YES" : "NO") << std::endl;
         std::cout << std::endl;
 
-        // Беремо першу знайдену точку з y != 0 як P
-        // (точки з y=0 мають порядок 2 — для демо цікавіші "звичайні" точки)
+        // Take the first found point with y != 0 as P
+        // (points with y=0 have order 2 -- "regular" points are more interesting for demo)
         long long px = 0, py = 0;
         for (auto& [x, y] : allPoints) {
             if (y != 0) { px = x; py = y; break; }
@@ -27,9 +32,9 @@ int main() {
         P.print();
         std::cout << std::endl;
 
-        // Спроба створити точку з неправильним y — fromAffine кине виключення
+        // Attempt to create a point with wrong y -- fromAffine should throw
         long long fakeY = mod(py + 1, static_cast<long long>(curve.p));
-        if (fakeY == mod(-py, static_cast<long long>(curve.p))) fakeY = mod(py + 2, static_cast<long long>(curve.p));  // щоб не потрапити на -P
+        if (fakeY == mod(-py, static_cast<long long>(curve.p))) fakeY = mod(py + 2, static_cast<long long>(curve.p));  // avoid landing on -P
         try {
             auto bad = EllipticCurvePoint<long long>::fromAffine(px, fakeY, &curve);
         } catch (const std::runtime_error& e) {
@@ -37,7 +42,7 @@ int main() {
         }
         std::cout << std::endl;
 
-        // --- PointDouble тест ---
+        // --- PointDouble test ---
         std::cout << "--- PointDouble test ---" << std::endl;
         auto twoP = P.pointDouble();
         std::cout << "2P = ";
@@ -45,16 +50,16 @@ int main() {
         std::cout << "2P on curve: " << (twoP.isOnCurve() ? "YES" : "NO") << std::endl;
         std::cout << std::endl;
 
-        // 2*(7,0): Y=0 => точка порядку 2, має дати O_E
+        // 2*(7,0): Y=0 => point of order 2, should give O_E
         auto fourP = twoP.pointDouble();
         std::cout << "4P = 2*(2P) = ";
         fourP.print();
         std::cout << std::endl;
 
-        // --- PointAdd тести ---
+        // --- PointAdd tests ---
         std::cout << "--- PointAdd tests ---" << std::endl;
 
-        // Q — друга знайдена точка з y != 0 і x != px
+        // Q -- second found point with y != 0 and x != px
         long long qx = 0, qy = 0;
         for (auto& [x, y] : allPoints) {
             if (y != 0 && x != px) { qx = x; qy = y; break; }
@@ -70,14 +75,14 @@ int main() {
         negP.print();
         std::cout << std::endl;
 
-        // P + Q (різні точки)
+        // P + Q (distinct points)
         auto PpQ = P.pointAdd(Q);
         std::cout << "P + Q = ";
         PpQ.print();
         std::cout << "On curve: " << (PpQ.isOnCurve() ? "YES" : "NO") << std::endl;
         std::cout << std::endl;
 
-        // P + P має дорівнювати 2P (перевірка що pointAdd делегує в pointDouble)
+        // P + P should equal 2P (verifies that pointAdd delegates to pointDouble)
         auto PpP = P.pointAdd(P);
         std::cout << "P + P = ";
         PpP.print();
@@ -98,12 +103,12 @@ int main() {
         std::cout << "Equals P: " << (PpO.equals(P) ? "YES" : "NO") << std::endl;
         std::cout << std::endl;
 
-        // --- ScalarMul тести ---
-        // Вимикаємо verbose — покрокову арифметику вже бачили вище
+        // --- ScalarMul tests ---
+        // Disable verbose -- we have already seen step-by-step arithmetic above
         curve.verbose = false;
         std::cout << "--- ScalarMul tests (verbose off) ---" << std::endl;
 
-        // 3P двома алгоритмами
+        // 3P via both algorithms
         auto threeP_daa = P.scalarMul(3LL);
         std::cout << "3P (DoubleAndAdd) = ";
         threeP_daa.print();
@@ -115,14 +120,14 @@ int main() {
         std::cout << "Both equal: " << (threeP_daa.equals(threeP_mont) ? "YES" : "NO") << std::endl;
         std::cout << std::endl;
 
-        // Перевірка: 3P == P + 2P
+        // Verify: 3P == P + 2P
         auto manual3P = P.pointAdd(twoP);
         std::cout << "P + 2P = ";
         manual3P.print();
         std::cout << "3P == P + 2P: " << (threeP_daa.equals(manual3P) ? "YES" : "NO") << std::endl;
         std::cout << std::endl;
 
-        // Крайні випадки
+        // Edge cases
         auto zeroP = P.scalarMul(0LL);
         std::cout << "0*P = ";
         zeroP.print();
@@ -133,12 +138,12 @@ int main() {
         std::cout << "Equals P: " << (oneP.equals(P) ? "YES" : "NO") << std::endl;
         std::cout << std::endl;
 
-        // Порядок точки P
+        // Point order of P
         long long ordP = P.pointOrder();
         std::cout << "ord(P) = " << ordP << "  (divides n=" << curve.n << ")" << std::endl;
         std::cout << std::endl;
 
-        // Перевірка пункту 2 завдання: n*P = O_E (n — порядок кривої)
+        // Curve order verification: n*P = O_E (n = curve order)
         auto nP = P.scalarMul(curve.n);
         std::cout << "Curve order verification: n*P (n=" << curve.n << ") = ";
         nP.print();
@@ -163,7 +168,7 @@ int main() {
         std::cout << std::endl;
 
         // 3) Weierstrass form: y^2 = x^3 + a*x + b
-        // Конвертація: a = (3 - A^2)/3,  b = (2A^3 - 9A)/27
+        // Conversion: a = (3 - A^2)/3,  b = (2A^3 - 9A)/27
         mpz_class inv3  = modInverse(mpz_class(3), p_bjj);
         mpz_class inv27 = modInverse(mpz_class(27), p_bjj);
         mpz_class A2 = mod(A_mont * A_mont, p_bjj);
@@ -171,7 +176,7 @@ int main() {
         mpz_class a_bjj = mod((3 - A2) * inv3, p_bjj);
         mpz_class b_bjj = mod((2 * A3 - 9 * A_mont) * inv27, p_bjj);
 
-        // Порядок: n = 8*r (з документації)
+        // Order: n = 8*r (from documentation)
         mpz_class r_bjj("2736030358979909402780800718157159386076813972158567259200215660948447373041");
         mpz_class n_bjj = 8 * r_bjj;
 
@@ -183,8 +188,8 @@ int main() {
         std::cout << "  r = " << r_bjj << " (prime, subgroup order)" << std::endl;
         std::cout << std::endl;
 
-        // Генератор: Edwards -> Montgomery -> Weierstrass
-        // Edwards generator (з документації iden3):
+        // Generator: Edwards -> Montgomery -> Weierstrass
+        // Edwards generator (from iden3 documentation):
         mpz_class ex("5299619240641551281634865583518297030282874472190772894086521144482721001553");
         mpz_class ey("16950150798460657717958625567821834550301663161624707787222815936182638968203");
 
@@ -200,7 +205,7 @@ int main() {
         std::cout << "Generator G: ";
         G.print();
 
-        // PointDouble / PointAdd тести
+        // PointDouble / PointAdd tests
         auto twoG = G.pointDouble();
         std::cout << "2G = ";
         twoG.print();
@@ -214,7 +219,7 @@ int main() {
         std::cout << "3G on curve: " << (threeG.isOnCurve() ? "YES" : "NO") << std::endl;
         std::cout << std::endl;
 
-        // ScalarMul тести
+        // ScalarMul tests
         std::cout << "--- ScalarMul tests (BJJ) ---" << std::endl;
 
         auto fiveG_daa  = G.scalarMul(mpz_class(5));
@@ -226,7 +231,7 @@ int main() {
         std::cout << "Both equal: " << (fiveG_daa.equals(fiveG_mont) ? "YES" : "NO") << std::endl;
         std::cout << std::endl;
 
-        // Ключова перевірка (пункт 2 завдання): n*G = O_E
+        // Key verification: n*G = O_E
         std::cout << "Verifying n*G = O_E..." << std::endl;
 
         auto start_daa = std::chrono::high_resolution_clock::now();

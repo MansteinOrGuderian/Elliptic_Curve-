@@ -1,28 +1,28 @@
 #pragma once
 
-// Точка еліптичної кривої у проективних координатах (X, Y, Z)
-// Афінна точка (x, y) відповідає проективній (x, y, 1)
-// Точка на нескінченності O_E = (0, 1, 0)
+// Elliptic curve point in projective coordinates (X, Y, Z)
+// Affine point (x, y) corresponds to projective (x, y, 1)
+// Point at infinity O_E = (0, 1, 0)
 
 template <typename T>
 class EllipticCurvePoint {
 public:
     T X, Y, Z;
-    const EllipticCurve<T>* curve;  // вказівник на криву, якій належить точка
+    const EllipticCurve<T>* curve;  // pointer to the curve this point belongs to
 
-    // --- Конструктори ---
+    // --- Constructors ---
 
-    // Конструктор проективної точки
+    // Projective point constructor
     EllipticCurvePoint(const T& X, const T& Y, const T& Z, const EllipticCurve<T>* curve)
         : X(X), Y(Y), Z(Z), curve(curve) {}
 
-    // Створення точки на нескінченності
+    // Create the point at infinity
     static EllipticCurvePoint infinity(const EllipticCurve<T>* curve) {
         return EllipticCurvePoint(T(0), T(1), T(0), curve);
     }
 
-    // Створення точки з афінних координат (x, y) -> (x, y, 1)
-    // Перевіряє належність точки до кривої; кидає виключення якщо ні.
+    // Create a point from affine coordinates (x, y) -> (x, y, 1)
+    // Validates that the point lies on the curve; throws if not.
     static EllipticCurvePoint fromAffine(const T& x, const T& y, const EllipticCurve<T>* curve) {
         EllipticCurvePoint pt(x, y, T(1), curve);
         if (!pt.isOnCurve())
@@ -30,22 +30,22 @@ public:
         return pt;
     }
 
-    // Створення точки БЕЗ перевірки (для внутрішнього використання —
-    // результати арифметики гарантовано на кривій, якщо вхід був коректний)
+    // Create a point WITHOUT validation (for internal use —
+    // arithmetic results are guaranteed on the curve if the input was correct)
     static EllipticCurvePoint fromAffineUnchecked(const T& x, const T& y, const EllipticCurve<T>* curve) {
         return EllipticCurvePoint(x, y, T(1), curve);
     }
 
-    // --- Перевірки ---
+    // --- Checks ---
 
     bool isInfinity() const {
         return Z == 0;
     }
 
-    // Перевірка з throw — для використання перед арифметичними операціями.
-    // Тиха: не друкує verbose, бо це внутрішня перевірка.
+    // Throwing check — used before arithmetic operations.
+    // Silent: does not print verbose output (internal check).
     void assertOnCurve(const std::string& context) const {
-        if (isInfinity()) return;  // O_E завжди на кривій
+        if (isInfinity()) return;  // O_E is always on the curve
 
         const T& p = curve->p;
         const T& a = curve->a;
@@ -63,7 +63,7 @@ public:
             throw std::runtime_error(context + ": point is NOT on the curve");
     }
 
-    // Перевірка належності точки до кривої: Y^2*Z = X^3 + a*X*Z^2 + b*Z^3 (mod p)
+    // Check whether the point lies on the curve: Y^2*Z = X^3 + a*X*Z^2 + b*Z^3 (mod p)
     bool isOnCurve() const {
         if (isInfinity()) return true;
 
@@ -71,7 +71,7 @@ public:
         const T& a = curve->a;
         const T& b = curve->b;
 
-        // mod після кожного множення, щоб уникнути переповнення long long
+        // mod() after every multiplication to prevent long long overflow
         T Y2 = mod(Y * Y, p);
         T lhs = mod(Y2 * Z, p);                                // Y^2 * Z
 
@@ -93,10 +93,10 @@ public:
         return lhs == rhs;
     }
 
-    // --- Конвертація ---
+    // --- Conversion ---
 
-    // Проективні -> афінні: (X, Y, Z) -> (X/Z, Y/Z)
-    // Повертає пару (x, y). Для O_E кидає виключення.
+    // Projective -> affine: (X, Y, Z) -> (X/Z, Y/Z)
+    // Returns a pair (x, y). Throws for O_E (no affine representation).
     std::pair<T, T> toAffine() const {
         if (isInfinity())
             throw std::runtime_error("toAffine: point at infinity has no affine coordinates");
@@ -114,13 +114,12 @@ public:
         return { x, y };
     }
 
-    // --- Арифметика ---
+    // --- Arithmetic ---
 
-    // Подвоєння точки у проективних координатах
-    // За псевдокодом: W = a*Z^2 + 3*X^2, S = Y*Z, B = X*Y*S,
+    // Point doubling in projective coordinates.
+    // Formulas: W = a*Z^2 + 3*X^2, S = Y*Z, B = X*Y*S,
     //   H = W^2 - 8*B, X' = 2*H*S, Y' = W*(4*B - H) - 8*Y^2*S^2, Z' = 8*S^3
     EllipticCurvePoint pointDouble() const {
-        // 2 * O_E = O_E
         if (isInfinity()) {
             if (curve->verbose)
                 std::cout << "[pointDouble] O_E doubled -> O_E" << std::endl;
@@ -132,7 +131,7 @@ public:
         const T& p = curve->p;
         const T& a = curve->a;
 
-        // Точка порядку 2: Y == 0 => 2P = O_E
+        // Point of order 2: Y == 0 => 2P = O_E
         if (mod(Y, p) == 0) {
             if (curve->verbose)
                 std::cout << "[pointDouble] P = (" << toString(X) << ", " << toString(Y) << ", " << toString(Z)
@@ -140,17 +139,16 @@ public:
             return infinity(curve);
         }
 
-        // Подвоєння у проективних координатах.
-        // Формули з псевдокоду: W, S, B, H -> X', Y', Z'.
-        // mod() після кожного множення щоб уникнути переповнення long long.
-        T W  = mod(mod(a * mod(Z * Z, p), p) + mod(3 * mod(X * X, p), p), p);  // W = a*Z^2 + 3*X^2
-        T S  = mod(Y * Z, p);                                                   // S = Y*Z
-        T B  = mod(mod(X * Y, p) * S, p);                                       // B = X*Y*S
-        T H  = mod(mod(W * W, p) - mod(8 * B, p), p);                           // H = W^2 - 8*B
-        T Xr = mod(mod(2 * H, p) * S, p);                                       // X' = 2*H*S
-        T Yr = mod(mod(W * mod(4 * B - H, p), p)                                // Y' = W*(4B-H)
-                  - mod(mod(8 * mod(Y * Y, p), p) * mod(S * S, p), p), p);      //     - 8*Y^2*S^2
-        T Zr = mod(8 * mod(mod(S * S, p) * S, p), p);                           // Z' = 8*S^3
+        // Projective doubling formulas.
+        // mod() after every multiplication to prevent long long overflow.
+        T W  = mod(mod(a * mod(Z * Z, p), p) + mod(3 * mod(X * X, p), p), p);
+        T S  = mod(Y * Z, p);
+        T B  = mod(mod(X * Y, p) * S, p);
+        T H  = mod(mod(W * W, p) - mod(8 * B, p), p);
+        T Xr = mod(mod(2 * H, p) * S, p);
+        T Yr = mod(mod(W * mod(4 * B - H, p), p)
+                  - mod(mod(8 * mod(Y * Y, p), p) * mod(S * S, p), p), p);
+        T Zr = mod(8 * mod(mod(S * S, p) * S, p), p);
 
         if (curve->verbose) {
             std::string mp = " (mod " + toString(p) + ")";
@@ -167,8 +165,8 @@ public:
         return EllipticCurvePoint(Xr, Yr, Zr, curve);
     }
 
-    // Додавання двох точок у проективних координатах
-    // За псевдокодом: U1, U2, V1, V2 -> U, V, W, A -> X3, Y3, Z3
+    // Point addition in projective coordinates.
+    // Formulas: U1, U2, V1, V2 -> U, V, W, A -> X3, Y3, Z3
     EllipticCurvePoint pointAdd(const EllipticCurvePoint& other) const {
         const T& p = curve->p;
 
@@ -187,42 +185,42 @@ public:
         assertOnCurve("pointAdd (P)");
         other.assertOnCurve("pointAdd (Q)");
 
-        // U1 = Y2*Z1,  U2 = Y1*Z2  (порівняння Y-координат у спільному масштабі)
+        // U1 = Y2*Z1, U2 = Y1*Z2 (compare Y-coordinates in common scale)
         T U1 = mod(other.Y * Z, p);
         T U2 = mod(Y * other.Z, p);
-        // V1 = X2*Z1,  V2 = X1*Z2  (порівняння X-координат у спільному масштабі)
+        // V1 = X2*Z1, V2 = X1*Z2 (compare X-coordinates in common scale)
         T V1 = mod(other.X * Z, p);
         T V2 = mod(X * other.Z, p);
 
         if (V1 == V2) {
-            // Однакова X-координата
+            // Same X-coordinate
             if (U1 != U2) {
-                // P і Q — взаємно обернені: P + (-P) = O_E
+                // P and Q are inverses: P + (-P) = O_E
                 if (curve->verbose)
                     std::cout << "[pointAdd] P = (" << toString(X) << ", " << toString(Y) << ", " << toString(Z)
                               << "), Q = (" << toString(other.X) << ", " << toString(other.Y) << ", " << toString(other.Z)
                               << ") -> inverse points -> O_E" << std::endl;
                 return infinity(curve);
             } else {
-                // P == Q: переходимо до подвоєння
+                // P == Q: delegate to point doubling
                 if (curve->verbose)
                     std::cout << "[pointAdd] P == Q -> calling pointDouble" << std::endl;
                 return pointDouble();
             }
         }
 
-        // Загальний випадок: P != Q, P != -Q
-        T U  = mod(U1 - U2, p);                          // U = U1 - U2
-        T V  = mod(V1 - V2, p);                          // V = V1 - V2
-        T W  = mod(Z * other.Z, p);                      // W = Z1*Z2
-        T Vsq = mod(V * V, p);                           // V^2
-        T Vcb = mod(Vsq * V, p);                         // V^3
-        T Usq = mod(U * U, p);                           // U^2
-        T VsqV2 = mod(Vsq * V2, p);                     // V^2 * V2
-        T A  = mod(mod(Usq * W, p) - Vcb - mod(2 * VsqV2, p), p);  // A = U^2*W - V^3 - 2*V^2*V2
-        T X3 = mod(V * A, p);                            // X3 = V*A
-        T Y3 = mod(mod(U * mod(VsqV2 - A, p), p) - mod(Vcb * U2, p), p);  // Y3 = U*(V^2*V2 - A) - V^3*U2
-        T Z3 = mod(Vcb * W, p);                          // Z3 = V^3*W
+        // General case: P != Q, P != -Q
+        T U  = mod(U1 - U2, p);
+        T V  = mod(V1 - V2, p);
+        T W  = mod(Z * other.Z, p);
+        T Vsq = mod(V * V, p);
+        T Vcb = mod(Vsq * V, p);
+        T Usq = mod(U * U, p);
+        T VsqV2 = mod(Vsq * V2, p);
+        T A  = mod(mod(Usq * W, p) - Vcb - mod(2 * VsqV2, p), p);
+        T X3 = mod(V * A, p);
+        T Y3 = mod(mod(U * mod(VsqV2 - A, p), p) - mod(Vcb * U2, p), p);
+        T Z3 = mod(Vcb * W, p);
 
         if (curve->verbose) {
             std::string mp = " (mod " + toString(p) + ")";
@@ -244,21 +242,20 @@ public:
         return EllipticCurvePoint(X3, Y3, Z3, curve);
     }
 
-    // --- Скалярний добуток ---
+    // --- Scalar Multiplication ---
 
-    // Алгоритм DoubleAndAdd: kP = P + P + ... + P (k разів)
-    // Ітерує по бітах k від молодшого до старшого.
-    // Час виконання залежить від кількості одиничних бітів (НЕ константний).
+    // Double-and-Add algorithm: kP = P + P + ... + P (k times)
+    // Iterates over bits of k from LSB to MSB.
+    // Running time depends on the number of set bits (NOT constant-time).
     EllipticCurvePoint scalarMul(const T& k) const {
         if (k == 0 || isInfinity())
             return infinity(curve);
 
         assertOnCurve("scalarMul");
 
-        EllipticCurvePoint res = infinity(curve);   // акумулятор
-        EllipticCurvePoint temp = *this;            // поточна степінь: P, 2P, 4P, ...
+        EllipticCurvePoint res = infinity(curve);   // accumulator
+        EllipticCurvePoint temp = *this;            // current power: P, 2P, 4P, ...
 
-        // Отримуємо бітове представлення k
         std::vector<int> bits = getBits(k);
 
         if (curve->verbose) {
@@ -281,9 +278,9 @@ public:
         return res;
     }
 
-    // Алгоритм сходів Монтгомері: kP
-    // Константний час виконання — завжди робить одне додавання і одне подвоєння на біт.
-    // Це важливо для криптографії (захист від side-channel атак).
+    // Montgomery ladder algorithm: kP
+    // Constant-time execution — always performs one addition and one doubling per bit.
+    // Important for cryptography (protection against side-channel attacks).
     EllipticCurvePoint scalarMulMontgomery(const T& k) const {
         if (k == 0 || isInfinity())
             return infinity(curve);
@@ -300,7 +297,7 @@ public:
                       << " (" << bits.size() << " bits)" << std::endl;
         }
 
-        // Зворотня ітерація: від старшого біта до молодшого
+        // Reverse iteration: from MSB to LSB
         for (int i = static_cast<int>(bits.size()) - 1; i >= 0; i--) {
             if (bits[i] == 0) {
                 if (curve->verbose)
@@ -319,8 +316,8 @@ public:
     }
 
 private:
-    // Бітове представлення числа (від молодшого до старшого біту).
-    // Працює і для long long, і для mpz_class (обидва підтримують % і /).
+    // Binary representation of a number (LSB first).
+    // Works for both long long and mpz_class (both support % and /).
     static std::vector<int> getBits(const T& k) {
         std::vector<int> bits;
         T val = k;
@@ -334,28 +331,27 @@ private:
 
 public:
 
-    // --- Порядок точки ---
+    // --- Point Order ---
 
-    // Знаходить порядок точки P — найменше k > 0 таке що kP = O_E.
-    // За теоремою Лагранжа, порядок точки ділить порядок кривої n.
-    // Тому перебираємо дільники n від найменшого.
+    // Finds the order of point P — the smallest k > 0 such that kP = O_E.
+    // By Lagrange's theorem, the point order divides the curve order n.
+    // Therefore we enumerate divisors of n from smallest to largest.
     T pointOrder() const {
         if (isInfinity()) return T(1);
 
         const T& n = curve->n;
         if (n == 0) throw std::runtime_error("pointOrder: curve order n is not set");
 
-        // Збираємо дільники n
-        std::vector<T> divisors;
+        // Collect divisors of n (set = automatically sorted)
+        std::set<T> divisors;
         for (T d = 1; d * d <= n; d += 1) {
             if (n % d == 0) {
-                divisors.push_back(d);
-                if (d != n / d) divisors.push_back(n / d);
+                divisors.insert(d);
+                divisors.insert(n / d);
             }
         }
-        std::sort(divisors.begin(), divisors.end());
 
-        // Перевіряємо від найменшого
+        // Check from smallest
         for (const T& d : divisors) {
             auto res = scalarMul(d);
             if (res.isInfinity()) {
@@ -368,21 +364,21 @@ public:
         throw std::runtime_error("pointOrder: failed to find order (should not happen)");
     }
 
-    // --- Виведення ---
+    // --- Output ---
 
-    // Допоміжна функція: T -> string (для сумісності з MSVC operator<< для mpz_class)
+    // Helper: T -> string (for MSVC compatibility with mpz_class operator<<)
     static std::string toString(const T& val) {
         std::ostringstream oss;
         oss << val;
         return oss.str();
     }
 
-    // Виводить точку. Verbose тут НЕ впливає — вивід завжди компактний.
+    // Print the point. Verbose does NOT affect this — output is always compact.
     void print() const {
         if (isInfinity()) {
             std::cout << "O_E (0 : 1 : 0)" << std::endl;
         } else {
-            // Обчислюємо афінні координати тихо (без verbose)
+            // Compute affine coordinates silently (without verbose)
             const T& p = curve->p;
             T zInv = modInverse(Z, p);
             T ax = mod(X * zInv, p);
@@ -393,8 +389,8 @@ public:
         }
     }
 
-    // --- Порівняння ---
-    // Дві проективні точки рівні якщо (X1*Z2 == X2*Z1) та (Y1*Z2 == Y2*Z1)
+    // --- Comparison ---
+    // Two projective points are equal if (X1*Z2 == X2*Z1) and (Y1*Z2 == Y2*Z1)
     bool equals(const EllipticCurvePoint& other) const {
         if (isInfinity() && other.isInfinity()) return true;
         if (isInfinity() || other.isInfinity()) return false;
