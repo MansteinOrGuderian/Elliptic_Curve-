@@ -3,8 +3,8 @@
 int main() {
     std::cout << "========== Simplified case ==========\n\n";
     {
-        // Set a, b, p for curve y^2 = x^3 + a*x + b (mod p)
-        long long sa = 5, sb = 7, sp = 11;
+        // CHANGE HERE: a, b, p for curve y^2 = x^3 + a*x + b (mod p) 2, 7, 11
+        long long sa = 3, sb = 3, sp = 17;
 
         EllipticCurve<long long> curve(sa, sb, sp, 0LL, /*verbose=*/true);
         curve.print();
@@ -12,7 +12,7 @@ int main() {
         std::cout << std::endl;
 
         // Find all points (fills n); sqrtExampleX=2 -- show sqrt computation for x=2
-        auto allPoints = curve.findAllPointsBruteforce(/*showTable=*/true, /*sqrtExampleX=*/2);
+        auto allPoints = curve.findAllPointsBruteforce(/*showTable=*/true, /*sqrtExampleX=*/3);
         std::cout << "Order (bruteforce): n = " << curve.n << std::endl;
 
         // Verify with Schoof's algorithm
@@ -41,6 +41,10 @@ int main() {
             std::cout << e.what() << std::endl;
         }
         std::cout << std::endl;
+
+        auto three_aff = P.scalarMulAffine(3LL);
+        std::cout << "3P (Affine)        = ";
+        three_aff.print();
 
         // --- PointDouble test ---
         std::cout << "--- PointDouble test ---" << std::endl;
@@ -108,16 +112,20 @@ int main() {
         curve.verbose = false;
         std::cout << "--- ScalarMul tests (verbose off) ---" << std::endl;
 
-        // 3P via both algorithms
+        // 3P via all three algorithms
         auto threeP_daa = P.scalarMul(3LL);
-        std::cout << "3P (DoubleAndAdd) = ";
+        std::cout << "3P (DoubleAndAdd)  = ";
         threeP_daa.print();
 
         auto threeP_mont = P.scalarMulMontgomery(3LL);
-        std::cout << "3P (Montgomery)   = ";
+        std::cout << "3P (Montgomery)    = ";
         threeP_mont.print();
 
-        std::cout << "Both equal: " << (threeP_daa.equals(threeP_mont) ? "YES" : "NO") << std::endl;
+        auto threeP_aff = P.scalarMulAffine(3LL);
+        std::cout << "3P (Affine)        = ";
+        threeP_aff.print();
+
+        std::cout << "All three equal: " << (threeP_daa.equals(threeP_mont) && threeP_daa.equals(threeP_aff) ? "YES" : "NO") << std::endl;
         std::cout << std::endl;
 
         // Verify: 3P == P + 2P
@@ -138,6 +146,13 @@ int main() {
         std::cout << "Equals P: " << (oneP.equals(P) ? "YES" : "NO") << std::endl;
         std::cout << std::endl;
 
+        // Affine edge cases
+        auto zeroP_aff = P.scalarMulAffine(0LL);
+        auto oneP_aff  = P.scalarMulAffine(1LL);
+        std::cout << "Affine: 0*P = " << (zeroP_aff.isInfinity() ? "O_E" : "NOT O_E")
+                  << ", 1*P equals P: " << (oneP_aff.equals(P) ? "YES" : "NO") << std::endl;
+        std::cout << std::endl;
+
         // Point order of P
         long long ordP = P.pointOrder();
         std::cout << "ord(P) = " << ordP << "  (divides n=" << curve.n << ")" << std::endl;
@@ -147,6 +162,73 @@ int main() {
         auto nP = P.scalarMul(curve.n);
         std::cout << "Curve order verification: n*P (n=" << curve.n << ") = ";
         nP.print();
+
+        auto nP_aff = P.scalarMulAffine(curve.n);
+        std::cout << "Affine verification:      n*P (n=" << curve.n << ") = ";
+        nP_aff.print();
+    }
+
+    // ==================== Long long performance comparison ====================
+    std::cout << "\n========== Performance: long long (p ~ 10^9) ==========\n\n";
+    {
+        // Use a large prime where n*P takes measurable time
+        long long sp = 1000000007LL, sa = 3, sb = 7;
+        EllipticCurve<long long> curve(sa, sb, sp, 0LL, false);
+
+        // Compute order via Schoof
+        long long n = curve.schoofOrder();
+        curve.n = n;
+        std::cout << "Curve: y^2 = x^3 + " << sa << "*x + " << sb << "  (mod " << sp << ")" << std::endl;
+        std::cout << "Order n = " << n << " (via Schoof)" << std::endl;
+
+        // C++ random generator for picking random x in [0, p)
+        std::mt19937_64 rng_ll(std::random_device{}());
+        std::uniform_int_distribution<long long> dist_ll(0, sp - 1);
+
+        const int RUNS = 10;
+        double t_proj_daa = 0, t_proj_mont = 0, t_aff_daa = 0, t_aff_mont = 0;
+
+        for (int run = 0; run < RUNS; run++) {
+            // Find a random point: pick random x, check if y^2 = f(x) is a QR
+            long long px = 0, py = 0;
+            while (true) {
+                px = dist_ll(rng_ll);
+                long long rhs = mod(modPow(px, 3LL, sp) + mod(sa * px, sp) + sb, sp);
+                py = modSqrt(rhs, sp);
+                if (py > 0) break;  // ~50% chance each iteration
+            }
+            auto P = EllipticCurvePoint<long long>::fromAffine(px, py, &curve);
+
+            std::cout << "  Run " << run << ": P = (" << px << ", " << py << ")";
+
+            auto c0 = std::chrono::high_resolution_clock::now();
+            auto r1 = P.scalarMul(n);
+            auto c1 = std::chrono::high_resolution_clock::now();
+            auto r2 = P.scalarMulMontgomery(n);
+            auto c2 = std::chrono::high_resolution_clock::now();
+            auto r3 = P.scalarMulAffine(n);
+            auto c3 = std::chrono::high_resolution_clock::now();
+            auto r4 = P.scalarMulMontgomeryAffine(n);
+            auto c4 = std::chrono::high_resolution_clock::now();
+
+            t_proj_daa += std::chrono::duration<double, std::milli>(c1 - c0).count();
+            t_proj_mont += std::chrono::duration<double, std::milli>(c2 - c1).count();
+            t_aff_daa += std::chrono::duration<double, std::milli>(c3 - c2).count();
+            t_aff_mont += std::chrono::duration<double, std::milli>(c4 - c3).count();
+
+            bool all_ok = r1.isInfinity() && r2.isInfinity() && r3.isInfinity() && r4.isInfinity();
+            std::cout << (all_ok ? "  n*P = O_E" : "  BUG!") << std::endl;
+        }
+
+        std::cout << std::fixed << std::setprecision(3);
+        std::cout << "\nAverage over " << RUNS << " runs:" << std::endl;
+        std::cout << "                       DoubleAndAdd    Montgomery" << std::endl;
+        std::cout << "  Projective:          "
+            << std::setw(8) << t_proj_daa / RUNS << " ms    "
+            << std::setw(8) << t_proj_mont / RUNS << " ms" << std::endl;
+        std::cout << "  Affine:              "
+            << std::setw(8) << t_aff_daa / RUNS << " ms    "
+            << std::setw(8) << t_aff_mont / RUNS << " ms" << std::endl;
     }
 
     std::cout << "\n========== Baby-JubJub ==========\n\n";
@@ -224,29 +306,85 @@ int main() {
 
         auto fiveG_daa  = G.scalarMul(mpz_class(5));
         auto fiveG_mont = G.scalarMulMontgomery(mpz_class(5));
+        auto fiveG_aff  = G.scalarMulAffine(mpz_class(5));
         std::cout << "5G (DoubleAndAdd) = ";
         fiveG_daa.print();
         std::cout << "5G (Montgomery)   = ";
         fiveG_mont.print();
-        std::cout << "Both equal: " << (fiveG_daa.equals(fiveG_mont) ? "YES" : "NO") << std::endl;
+        std::cout << "5G (Affine)       = ";
+        fiveG_aff.print();
+        std::cout << "All three equal: " << (fiveG_daa.equals(fiveG_mont) && fiveG_daa.equals(fiveG_aff) ? "YES" : "NO") << std::endl;
         std::cout << std::endl;
 
-        // Key verification: n*G = O_E
-        std::cout << "Verifying n*G = O_E..." << std::endl;
+        // Key verification: n*P = O_E with random points each run.
+        // Performance comparison: all 4 scalar multiplication algorithms.
+        std::cout << "Verifying n*P = O_E with random points (performance comparison)..." << std::endl;
+        const int RUNS = 10;
 
-        auto start_daa = std::chrono::high_resolution_clock::now();
-        auto nG_daa = G.scalarMul(n_bjj);
-        auto end_daa = std::chrono::high_resolution_clock::now();
-        double ms_daa = std::chrono::duration<double, std::milli>(end_daa - start_daa).count();
-        std::cout << "n*G (DoubleAndAdd):  " << (nG_daa.isInfinity() ? "O_E" : "NOT O_E")
-                  << "  [" << ms_daa << " ms]" << std::endl;
+        double total_proj_daa = 0, total_proj_mont = 0;
+        double total_aff_daa = 0, total_aff_mont = 0;
 
-        auto start_mont = std::chrono::high_resolution_clock::now();
-        auto nG_mont = G.scalarMulMontgomery(n_bjj);
-        auto end_mont = std::chrono::high_resolution_clock::now();
-        double ms_mont = std::chrono::duration<double, std::milli>(end_mont - start_mont).count();
-        std::cout << "n*G (Montgomery):    " << (nG_mont.isInfinity() ? "O_E" : "NOT O_E")
-                  << "  [" << ms_mont << " ms]" << std::endl;
+        // GMP random number generator, seeded from std::random_device (OS entropy)
+        gmp_randclass rng(gmp_randinit_mt);  // Mersenne Twister
+        {
+            std::random_device rd;
+            mpz_class seed = mpz_class(static_cast<unsigned long>(rd()))    // first 32 bytes
+                * mpz_class(0x10000UL) * mpz_class(0x10000UL)   // * 2^32
+                + mpz_class(static_cast<unsigned long>(rd()));   // last 32 bytes
+            rng.seed(seed); // initialized with сreated 64-bit integer number
+            std::cout << "  RNG seed: " << seed << std::endl;
+        }
+
+        for (int run = 0; run < RUNS; run++) {
+            // Generate a random point: pick random x in [0, p), check if y^2 = f(x) is a QR
+            mpz_class rx, ry;
+            bool found = false;
+            while (!found) {
+                rx = rng.get_z_range(p_bjj);  // uniform random x in [0, p)
+                mpz_class rhs = mod(rx * rx * rx + a_bjj * rx + b_bjj, p_bjj);
+                ry = modSqrt(rhs, p_bjj);
+                if (ry >= 0) found = true;     // ~50% chance each iteration
+            }
+
+            auto P = EllipticCurvePoint<mpz_class>::fromAffine(rx, ry, &bjj);
+
+            // Print the point (truncated for readability)
+            std::string rx_str = rx.get_str();
+            std::string ry_str = ry.get_str();
+            std::cout << "  Run " << run << ": P = ("
+                      << rx_str.substr(0, 12) << "..." << rx_str.substr(rx_str.size() - 4)
+                      << ", "
+                      << ry_str.substr(0, 12) << "..." << ry_str.substr(ry_str.size() - 4)
+                      << ")";
+
+            auto t0 = std::chrono::high_resolution_clock::now();
+            auto r1 = P.scalarMul(n_bjj);
+            auto t1 = std::chrono::high_resolution_clock::now();
+            auto r2 = P.scalarMulMontgomery(n_bjj);
+            auto t2 = std::chrono::high_resolution_clock::now();
+            auto r3 = P.scalarMulAffine(n_bjj);
+            auto t3 = std::chrono::high_resolution_clock::now();
+            auto r4 = P.scalarMulMontgomeryAffine(n_bjj);
+            auto t4 = std::chrono::high_resolution_clock::now();
+
+            total_proj_daa  += std::chrono::duration<double, std::milli>(t1 - t0).count();
+            total_proj_mont += std::chrono::duration<double, std::milli>(t2 - t1).count();
+            total_aff_daa   += std::chrono::duration<double, std::milli>(t3 - t2).count();
+            total_aff_mont  += std::chrono::duration<double, std::milli>(t4 - t3).count();
+
+            bool all_ok = r1.isInfinity() && r2.isInfinity() && r3.isInfinity() && r4.isInfinity();
+            std::cout << (all_ok ? "  n*P = O_E" : "  BUG!") << std::endl;
+        }
+
+        std::cout << std::fixed << std::setprecision(2);
+        std::cout << "\n  Average over " << RUNS << " runs:" << std::endl;
+        std::cout << "                         DoubleAndAdd    Montgomery" << std::endl;
+        std::cout << "    Projective:          "
+                  << std::setw(8) << total_proj_daa  / RUNS << " ms    "
+                  << std::setw(8) << total_proj_mont / RUNS << " ms" << std::endl;
+        std::cout << "    Affine:              "
+                  << std::setw(8) << total_aff_daa   / RUNS << " ms    "
+                  << std::setw(8) << total_aff_mont  / RUNS << " ms" << std::endl;
         std::cout << std::endl;
     }
 

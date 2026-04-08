@@ -315,6 +315,170 @@ public:
         return R0;
     }
 
+    // ===================== Affine Arithmetic =====================
+    //
+    // Same mathematical operations as above, but using affine coordinates (x, y)
+    // instead of projective (X : Y : Z).
+    //
+    // Key difference: each affine operation requires one modular inversion (for the
+    // slope lambda), while projective operations require zero inversions per step
+    // and only one final inversion to convert the result back to affine.
+    //
+    // For scalar multiplication kP with a 254-bit scalar:
+    //   Projective:  ~254 doublings + ~127 additions + 1 inversion   =   1 inversion
+    //   Affine:      ~254 doublings + ~127 additions, each with 1 inv = ~381 inversions
+    //
+    // modInverse uses the Extended Euclidean Algorithm (O(log p) divisions), which is
+    // significantly more expensive than a few extra multiplications. Therefore projective
+    // arithmetic is expected to be faster for scalar multiplication.
+
+    // Affine point doubling: 2P using the tangent line slope.
+    // Formula: lambda = (3*x^2 + a) / (2*y), x' = lambda^2 - 2*x, y' = lambda*(x - x') - y
+    // Cost: 1 modInverse + 3 mul + 2 sqr (approximately)
+    EllipticCurvePoint pointDoubleAffine() const {
+        if (isInfinity()) return infinity(curve);
+
+        const T& p = curve->p;
+        const T& a = curve->a;
+
+        // Convert to affine if needed (Z might not be 1 after projective ops)
+        T x1, y1;
+        if (Z == T(1)) {
+            x1 = X; y1 = Y;
+        } else {
+            T zInv = modInverse(Z, p);
+            x1 = mod(X * zInv, p);
+            y1 = mod(Y * zInv, p);
+        }
+
+        // Point of order 2: y = 0 => 2P = O_E
+        if (y1 == T(0)) return infinity(curve);
+
+        // lambda = (3*x1^2 + a) / (2*y1)
+        T x1sq = mod(x1 * x1, p);
+        T num = mod(mod(T(3) * x1sq, p) + a, p);      // 3*x1^2 + a
+        T den = mod(T(2) * y1, p);                      // 2*y1
+        T lambda = mod(num * modInverse(den, p), p);     // <-- the expensive inversion
+
+        // x3 = lambda^2 - 2*x1
+        T lsq = mod(lambda * lambda, p);
+        T x3 = mod(lsq - mod(T(2) * x1, p), p);
+
+        // y3 = lambda*(x1 - x3) - y1
+        T y3 = mod(mod(lambda * mod(x1 - x3, p), p) - y1, p);
+
+        if (curve->verbose) {
+            std::string mp = " (mod " + toString(p) + ")";
+            std::cout << "[pointDoubleAffine] P = (" << toString(x1) << ", " << toString(y1) << ")" << std::endl;
+            std::cout << "  lambda = (3*" << toString(x1) << "^2 + " << toString(a) << ") / (2*" << toString(y1) << ") = "
+                      << toString(num) << " / " << toString(den) << " = " << toString(lambda) << mp << std::endl;
+            std::cout << "  x' = " << toString(lambda) << "^2 - 2*" << toString(x1) << " = " << toString(x3) << mp << std::endl;
+            std::cout << "  y' = " << toString(lambda) << "*(" << toString(x1) << " - " << toString(x3) << ") - " << toString(y1) << " = " << toString(y3) << mp << std::endl;
+        }
+
+        return EllipticCurvePoint(x3, y3, T(1), curve);
+    }
+
+    // Affine point addition: P + Q using the chord slope.
+    // Formula: lambda = (y2 - y1) / (x2 - x1), x' = lambda^2 - x1 - x2, y' = lambda*(x1 - x') - y1
+    // Cost: 1 modInverse + 2 mul + 1 sqr (approximately)
+    EllipticCurvePoint pointAddAffine(const EllipticCurvePoint& other) const {
+        const T& p = curve->p;
+
+        // Identity element handling
+        if (isInfinity()) return other;
+        if (other.isInfinity()) return *this;
+
+        // Convert both points to affine
+        T x1, y1, x2, y2;
+        if (Z == T(1)) { x1 = X; y1 = Y; }
+        else { T zi = modInverse(Z, p); x1 = mod(X * zi, p); y1 = mod(Y * zi, p); }
+
+        if (other.Z == T(1)) { x2 = other.X; y2 = other.Y; }
+        else { T zi = modInverse(other.Z, p); x2 = mod(other.X * zi, p); y2 = mod(other.Y * zi, p); }
+
+        if (x1 == x2) {
+            if (y1 != y2) {
+                // P + (-P) = O_E  (same x, opposite y)
+                return infinity(curve);
+            } else {
+                // P == Q, delegate to doubling
+                return pointDoubleAffine();
+            }
+        }
+
+        // lambda = (y2 - y1) / (x2 - x1)
+        T dy = mod(y2 - y1, p);
+        T dx = mod(x2 - x1, p);
+        T lambda = mod(dy * modInverse(dx, p), p);       // <-- the expensive inversion
+
+        // x3 = lambda^2 - x1 - x2
+        T lsq = mod(lambda * lambda, p);
+        T x3 = mod(lsq - x1 - x2, p);
+
+        // y3 = lambda*(x1 - x3) - y1
+        T y3 = mod(mod(lambda * mod(x1 - x3, p), p) - y1, p);
+
+        if (curve->verbose) {
+            std::string mp = " (mod " + toString(p) + ")";
+            std::cout << "[pointAddAffine] P = (" << toString(x1) << ", " << toString(y1)
+                      << "), Q = (" << toString(x2) << ", " << toString(y2) << ")" << std::endl;
+            std::cout << "  lambda = (" << toString(y2) << " - " << toString(y1) << ") / ("
+                      << toString(x2) << " - " << toString(x1) << ") = "
+                      << toString(dy) << " / " << toString(dx) << " = " << toString(lambda) << mp << std::endl;
+            std::cout << "  x' = " << toString(lambda) << "^2 - " << toString(x1) << " - " << toString(x2) << " = " << toString(x3) << mp << std::endl;
+            std::cout << "  y' = " << toString(lambda) << "*(" << toString(x1) << " - " << toString(x3) << ") - " << toString(y1) << " = " << toString(y3) << mp << std::endl;
+        }
+
+        return EllipticCurvePoint(x3, y3, T(1), curve);
+    }
+
+    // Double-and-Add using affine arithmetic.
+    // Same algorithm as scalarMul, but calls pointDoubleAffine/pointAddAffine
+    // instead of projective pointDouble/pointAdd.
+    EllipticCurvePoint scalarMulAffine(const T& k) const {
+        if (k == 0 || isInfinity())
+            return infinity(curve);
+
+        EllipticCurvePoint res = infinity(curve);
+        EllipticCurvePoint temp = *this;
+
+        std::vector<int> bits = getBits(k);
+
+        for (size_t i = 0; i < bits.size(); i++) {
+            if (bits[i] == 1)
+                res = res.pointAddAffine(temp);
+            temp = temp.pointDoubleAffine();
+        }
+
+        return res;
+    }
+
+    // Montgomery ladder using affine arithmetic.
+    // Same algorithm as scalarMulMontgomery, but calls pointDoubleAffine/pointAddAffine.
+    // Constant-time (always one add + one double per bit), using affine coordinates.
+    EllipticCurvePoint scalarMulMontgomeryAffine(const T& k) const {
+        if (k == 0 || isInfinity())
+            return infinity(curve);
+
+        EllipticCurvePoint R0 = infinity(curve);
+        EllipticCurvePoint R1 = *this;
+
+        std::vector<int> bits = getBits(k);
+
+        for (int i = static_cast<int>(bits.size()) - 1; i >= 0; i--) {
+            if (bits[i] == 0) {
+                R1 = R0.pointAddAffine(R1);
+                R0 = R0.pointDoubleAffine();
+            } else {
+                R0 = R0.pointAddAffine(R1);
+                R1 = R1.pointDoubleAffine();
+            }
+        }
+
+        return R0;
+    }
+
 private:
     // Binary representation of a number (LSB first).
     // Works for both long long and mpz_class (both support % and /).

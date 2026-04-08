@@ -10,6 +10,7 @@
 #include <chrono>
 #include <cmath>
 #include <algorithm>
+#include <random>
 
 #ifdef _MSC_VER
 #pragma warning(push)
@@ -148,6 +149,48 @@ inline long long modSqrt(long long a, long long p, bool verbose = false) {
         while (temp != 1) { temp = mod(temp * temp, p); i++; }
         long long b = c;
         for (long long j = 0; j < M - i - 1; j++) b = mod(b * b, p);
+        M = i;
+        c = mod(b * b, p);
+        t = mod(t * c, p);
+        R = mod(R * b, p);
+    }
+}
+
+// --- modSqrt for mpz_class: Tonelli-Shanks ---
+// Returns y such that y^2 = a (mod p), or -1 (as mpz_class) if no root exists.
+// Needed for finding random points on curves with large primes.
+inline mpz_class modSqrt(const mpz_class& a, const mpz_class& p) {
+    mpz_class a_mod = mod(a, p);
+    if (a_mod == 0) return mpz_class(0);
+
+    // Legendre symbol
+    mpz_class leg = modPow(a_mod, (p - 1) / 2, p);
+    if (leg != 1) return mpz_class(-1);
+
+    // Case p = 3 (mod 4)
+    if (p % 4 == 3)
+        return modPow(a_mod, (p + 1) / 4, p);
+
+    // General Tonelli-Shanks
+    mpz_class s = 0, q = p - 1;
+    while (q % 2 == 0) { q /= 2; s += 1; }
+
+    // Find a quadratic non-residue z
+    mpz_class z = 2;
+    while (modPow(z, (p - 1) / 2, p) != p - 1) z += 1;
+
+    mpz_class M = s;
+    mpz_class c = modPow(z, q, p);
+    mpz_class t = modPow(a_mod, q, p);
+    mpz_class R = modPow(a_mod, (q + 1) / 2, p);
+
+    while (true) {
+        if (t == 1) return R;
+        mpz_class i = 0;
+        mpz_class tmp = t;
+        while (tmp != 1) { tmp = mod(tmp * tmp, p); i += 1; }
+        mpz_class b = c;
+        for (mpz_class j = 0; j < M - i - 1; j += 1) b = mod(b * b, p);
         M = i;
         c = mod(b * b, p);
         t = mod(t * c, p);
